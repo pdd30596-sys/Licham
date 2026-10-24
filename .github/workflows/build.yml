@@ -26,8 +26,17 @@ jobs:
                   applicationId "vn.amlich.app"
                   minSdk 26
                   targetSdk 34
-                  versionCode 1
-                  versionName "1.0"
+                  versionCode 2
+                  versionName "1.1"
+              }
+
+              signingConfigs {
+                  debug {
+                      storeFile rootProject.file('debug.keystore')
+                      storePassword 'android'
+                      keyAlias 'androiddebugkey'
+                      keyPassword 'android'
+                  }
               }
 
               buildTypes {
@@ -67,6 +76,11 @@ jobs:
                           <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
                   </activity>
+
+                  <activity
+                      android:name=".SettingsActivity"
+                      android:exported="false"
+                      android:label="Tùy chỉnh widget" />
 
                   <receiver
                       android:name=".DayWidgetProvider"
@@ -294,6 +308,7 @@ jobs:
           import android.app.Activity
           import android.appwidget.AppWidgetManager
           import android.content.ComponentName
+          import android.content.Intent
           import android.graphics.Color
           import android.graphics.Typeface
           import android.os.Build
@@ -379,6 +394,11 @@ jobs:
                   row.addView(addMonth, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                   root.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
+                  val settingsBtn = Button(this)
+                  settingsBtn.text = "⚙ Tùy chỉnh widget"
+                  settingsBtn.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
+                  root.addView(settingsBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
                   setContentView(root)
                   goToday()
               }
@@ -461,11 +481,17 @@ jobs:
           object MonthRenderer {
               class Geo(val offset: Int, val days: Int, val rows: Int)
 
+              class Style(
+                  val text: Int,
+                  val sub: Int,
+                  val accent: Int,
+                  val event: Int,
+                  val fontScale: Float
+              )
+
+              val DEFAULT = Style(0xFF212121.toInt(), 0xFF757575.toInt(), 0xFFE53935.toInt(), 0xFFEF6C00.toInt(), 1f)
+
               private val WEEKDAYS = arrayOf("T2", "T3", "T4", "T5", "T6", "T7", "CN")
-              private const val RED = 0xFFE53935.toInt()
-              private const val TEXT = 0xFF212121.toInt()
-              private const val SUB = 0xFF757575.toInt()
-              private const val ORANGE = 0xFFEF6C00.toInt()
 
               fun geo(year: Int, month: Int): Geo {
                   val c = Calendar.getInstance()
@@ -484,28 +510,30 @@ jobs:
 
               fun draw(
                   canvas: Canvas, w: Float, h: Float, year: Int, month: Int,
-                  todayY: Int, todayM: Int, todayD: Int, selected: Int, title: String?
+                  todayY: Int, todayM: Int, todayD: Int, selected: Int, title: String?,
+                  style: Style = DEFAULT
               ) {
                   val g = geo(year, month)
                   val top = gridTop(h, title != null)
                   val cellW = w / 7f
                   val cellH = (h - top) / g.rows
                   val unit = minOf(cellW, cellH)
+                  val fs = style.fontScale
 
                   val p = Paint(Paint.ANTI_ALIAS_FLAG)
                   p.textAlign = Paint.Align.CENTER
 
                   if (title != null) {
-                      p.color = TEXT
+                      p.color = style.text
                       p.typeface = Typeface.DEFAULT_BOLD
-                      p.textSize = h * 0.065f
+                      p.textSize = minOf(h * 0.065f, w * 0.058f) * fs
                       canvas.drawText(title, w / 2f, titleHeight(h, true) * 0.72f, p)
                   }
 
                   p.typeface = Typeface.DEFAULT_BOLD
-                  p.textSize = weekdayHeight(h) * 0.5f
+                  p.textSize = minOf(weekdayHeight(h) * 0.5f, cellW * 0.4f) * fs
                   for (i in 0 until 7) {
-                      p.color = if (i == 6) RED else SUB
+                      p.color = if (i == 6) style.accent else style.sub
                       val y = titleHeight(h, title != null) + weekdayHeight(h) * 0.68f
                       canvas.drawText(WEEKDAYS[i], i * cellW + cellW / 2f, y, p)
                   }
@@ -522,40 +550,39 @@ jobs:
 
                       if (isToday) {
                           p.style = Paint.Style.FILL
-                          p.color = RED
+                          p.color = style.accent
                           canvas.drawCircle(cx, cy, unit * 0.46f, p)
                       } else if (d == selected) {
                           p.style = Paint.Style.STROKE
                           p.strokeWidth = unit * 0.05f
-                          p.color = RED
+                          p.color = style.accent
                           canvas.drawCircle(cx, cy, unit * 0.46f, p)
-                          p.style = Paint.Style.FILL
                       }
                       p.style = Paint.Style.FILL
 
                       p.typeface = Typeface.DEFAULT_BOLD
-                      p.textSize = unit * 0.34f
+                      p.textSize = unit * 0.34f * fs
                       p.color = when {
                           isToday -> Color.WHITE
-                          col == 6 -> RED
-                          else -> TEXT
+                          col == 6 -> style.accent
+                          else -> style.text
                       }
                       canvas.drawText(d.toString(), cx, cy - cellH * 0.01f, p)
 
                       p.typeface = if (lunar.day == 1) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                      p.textSize = unit * 0.2f
+                      p.textSize = unit * 0.2f * fs
                       p.color = when {
                           isToday -> Color.WHITE
-                          lunar.day == 1 -> RED
-                          hasEvent -> ORANGE
-                          else -> SUB
+                          lunar.day == 1 -> style.accent
+                          hasEvent -> style.event
+                          else -> style.sub
                       }
                       val lt = if (lunar.day == 1) {
                           "1/${lunar.month}" + (if (lunar.leap) "n" else "")
                       } else {
                           lunar.day.toString()
                       }
-                      canvas.drawText(lt, cx, cy + unit * 0.3f, p)
+                      canvas.drawText(lt, cx, cy + unit * 0.3f * fs.coerceAtMost(1.2f), p)
                   }
               }
           }
@@ -611,6 +638,325 @@ jobs:
           }
           AMLICH_EOF
           mkdir -p "app/src/main/java/vn/amlich/app"
+          cat > "app/src/main/java/vn/amlich/app/Prefs.kt" <<'AMLICH_EOF'
+          package vn.amlich.app
+
+          import android.content.Context
+
+          data class Settings(
+              val numberSp: Int = 48,
+              val monthSp: Int = 14,
+              val dateSp: Int = 13,
+              val calScale: Int = 100,
+              val numberColor: Int = 0xFFE53935.toInt(),
+              val textColor: Int = 0xFF212121.toInt(),
+              val subColor: Int = 0xFF757575.toInt(),
+              val eventColor: Int = 0xFFEF6C00.toInt(),
+              val bgColor: Int = 0xFFFFFFFF.toInt(),
+              val bgAlpha: Int = 96,
+              val showYear: Boolean = true,
+              val showEvent: Boolean = true
+          )
+
+          object Prefs {
+              private const val FILE = "amlich_prefs"
+
+              fun load(ctx: Context): Settings {
+                  val p = ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+                  val d = Settings()
+                  return Settings(
+                      numberSp = p.getInt("numberSp", d.numberSp),
+                      monthSp = p.getInt("monthSp", d.monthSp),
+                      dateSp = p.getInt("dateSp", d.dateSp),
+                      calScale = p.getInt("calScale", d.calScale),
+                      numberColor = p.getInt("numberColor", d.numberColor),
+                      textColor = p.getInt("textColor", d.textColor),
+                      subColor = p.getInt("subColor", d.subColor),
+                      eventColor = p.getInt("eventColor", d.eventColor),
+                      bgColor = p.getInt("bgColor", d.bgColor),
+                      bgAlpha = p.getInt("bgAlpha", d.bgAlpha),
+                      showYear = p.getBoolean("showYear", d.showYear),
+                      showEvent = p.getBoolean("showEvent", d.showEvent)
+                  )
+              }
+
+              fun save(ctx: Context, s: Settings) {
+                  ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
+                      .putInt("numberSp", s.numberSp)
+                      .putInt("monthSp", s.monthSp)
+                      .putInt("dateSp", s.dateSp)
+                      .putInt("calScale", s.calScale)
+                      .putInt("numberColor", s.numberColor)
+                      .putInt("textColor", s.textColor)
+                      .putInt("subColor", s.subColor)
+                      .putInt("eventColor", s.eventColor)
+                      .putInt("bgColor", s.bgColor)
+                      .putInt("bgAlpha", s.bgAlpha)
+                      .putBoolean("showYear", s.showYear)
+                      .putBoolean("showEvent", s.showEvent)
+                      .apply()
+              }
+
+              fun reset(ctx: Context) {
+                  ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().clear().apply()
+              }
+          }
+          AMLICH_EOF
+          mkdir -p "app/src/main/java/vn/amlich/app"
+          cat > "app/src/main/java/vn/amlich/app/SettingsActivity.kt" <<'AMLICH_EOF'
+          package vn.amlich.app
+
+          import android.app.Activity
+          import android.app.AlertDialog
+          import android.graphics.Color
+          import android.graphics.Typeface
+          import android.graphics.drawable.GradientDrawable
+          import android.os.Bundle
+          import android.text.InputType
+          import android.view.Gravity
+          import android.view.View
+          import android.view.ViewGroup
+          import android.widget.Button
+          import android.widget.CheckBox
+          import android.widget.EditText
+          import android.widget.FrameLayout
+          import android.widget.LinearLayout
+          import android.widget.ScrollView
+          import android.widget.SeekBar
+          import android.widget.TextView
+
+          class SettingsActivity : Activity() {
+              private var s = Settings()
+              private lateinit var dayBox: FrameLayout
+              private lateinit var monthBox: FrameLayout
+
+              private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+              private val presets = intArrayOf(
+                  0xFFFFFFFF.toInt(), 0xFF000000.toInt(), 0xFF212121.toInt(), 0xFF757575.toInt(), 0xFFBDBDBD.toInt(), 0xFFFFF8E1.toInt(),
+                  0xFFE53935.toInt(), 0xFFD81B60.toInt(), 0xFF8E24AA.toInt(), 0xFF3949AB.toInt(), 0xFF1E88E5.toInt(), 0xFF00ACC1.toInt(),
+                  0xFF00897B.toInt(), 0xFF43A047.toInt(), 0xFFC0CA33.toInt(), 0xFFFDD835.toInt(), 0xFFFB8C00.toInt(), 0xFF6D4C41.toInt()
+              )
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  s = Prefs.load(this)
+
+                  val scroll = ScrollView(this)
+                  scroll.setBackgroundColor(0xFFFAFAFA.toInt())
+                  scroll.fitsSystemWindows = true
+                  val root = LinearLayout(this)
+                  root.orientation = LinearLayout.VERTICAL
+                  root.setPadding(dp(16), dp(16), dp(16), dp(24))
+                  scroll.addView(root, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+                  root.addView(heading("Tùy chỉnh widget", 22f))
+                  root.addView(note("Xem trước bên dưới đổi ngay khi bạn chỉnh. Có thể kéo viền widget ở màn hình chính để thu nhỏ hoặc phóng to."))
+
+                  val preview = LinearLayout(this)
+                  preview.orientation = LinearLayout.VERTICAL
+                  preview.gravity = Gravity.CENTER_HORIZONTAL
+                  preview.setBackgroundColor(0xFF90A4AE.toInt())
+                  preview.setPadding(dp(12), dp(12), dp(12), dp(12))
+                  dayBox = FrameLayout(this)
+                  monthBox = FrameLayout(this)
+                  preview.addView(dayBox, LinearLayout.LayoutParams(dp(130), dp(130)))
+                  val mlp = LinearLayout.LayoutParams(dp(280), dp(250))
+                  mlp.topMargin = dp(12)
+                  preview.addView(monthBox, mlp)
+                  root.addView(preview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+                  root.addView(heading("Kích thước chữ", 18f))
+                  addSeek(root, "Số ngày âm (widget ngày)", 20, 90, s.numberSp, " sp") { v -> update(s.copy(numberSp = v)) }
+                  addSeek(root, "Chữ tháng / năm âm", 8, 26, s.monthSp, " sp") { v -> update(s.copy(monthSp = v)) }
+                  addSeek(root, "Chữ ngày dương", 8, 22, s.dateSp, " sp") { v -> update(s.copy(dateSp = v)) }
+                  addSeek(root, "Cỡ chữ lịch tháng (widget tháng)", 60, 150, s.calScale, " %") { v -> update(s.copy(calScale = v)) }
+
+                  root.addView(heading("Hiển thị (widget ngày)", 18f))
+                  addCheck(root, "Hiện năm can chi", s.showYear) { b -> update(s.copy(showYear = b)) }
+                  addCheck(root, "Hiện ngày lễ / ngày can chi", s.showEvent) { b -> update(s.copy(showEvent = b)) }
+
+                  root.addView(heading("Màu sắc", 18f))
+                  addColor(root, "Số ngày âm / ngày Chủ nhật", { it.numberColor }) { st, c -> st.copy(numberColor = c) }
+                  addColor(root, "Chữ chính (tháng, năm)", { it.textColor }) { st, c -> st.copy(textColor = c) }
+                  addColor(root, "Chữ phụ (ngày dương)", { it.subColor }) { st, c -> st.copy(subColor = c) }
+                  addColor(root, "Màu ngày lễ", { it.eventColor }) { st, c -> st.copy(eventColor = c) }
+                  addColor(root, "Màu nền widget", { it.bgColor }) { st, c -> st.copy(bgColor = c) }
+                  addSeek(root, "Độ đậm của nền (0 = trong suốt)", 0, 100, s.bgAlpha, " %") { v -> update(s.copy(bgAlpha = v)) }
+
+                  val reset = Button(this)
+                  reset.text = "Khôi phục mặc định"
+                  reset.setOnClickListener {
+                      Prefs.reset(this)
+                      WidgetUpdater.updateAll(this)
+                      recreate()
+                  }
+                  val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                  rlp.topMargin = dp(16)
+                  root.addView(reset, rlp)
+
+                  setContentView(scroll)
+                  refreshPreview()
+              }
+
+              override fun onPause() {
+                  super.onPause()
+                  WidgetUpdater.updateAll(this)
+              }
+
+              private fun update(n: Settings) {
+                  s = n
+                  Prefs.save(this, s)
+                  refreshPreview()
+              }
+
+              private fun refreshPreview() {
+                  dayBox.removeAllViews()
+                  monthBox.removeAllViews()
+                  val dv = WidgetUpdater.buildDay(this, 130f, 130f).apply(this, dayBox)
+                  dayBox.addView(dv)
+                  val mv = WidgetUpdater.buildMonth(this, 280f, 250f).apply(this, monthBox)
+                  monthBox.addView(mv)
+              }
+
+              private fun heading(t: String, size: Float): TextView {
+                  val tv = TextView(this)
+                  tv.text = t
+                  tv.textSize = size
+                  tv.setTypeface(null, Typeface.BOLD)
+                  tv.setTextColor(0xFF212121.toInt())
+                  tv.setPadding(0, dp(18), 0, dp(6))
+                  return tv
+              }
+
+              private fun note(t: String): TextView {
+                  val tv = TextView(this)
+                  tv.text = t
+                  tv.textSize = 13f
+                  tv.setTextColor(0xFF616161.toInt())
+                  tv.setPadding(0, 0, 0, dp(10))
+                  return tv
+              }
+
+              private fun addSeek(
+                  parent: LinearLayout, label: String, min: Int, max: Int, value: Int, unit: String,
+                  onChange: (Int) -> Unit
+              ) {
+                  val tv = TextView(this)
+                  tv.text = "$label: $value$unit"
+                  tv.textSize = 15f
+                  tv.setTextColor(0xFF212121.toInt())
+                  tv.setPadding(0, dp(8), 0, 0)
+                  val sb = SeekBar(this)
+                  sb.max = max - min
+                  sb.progress = (value - min).coerceIn(0, max - min)
+                  sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                      override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                          val v = progress + min
+                          tv.text = "$label: $v$unit"
+                          if (fromUser) onChange(v)
+                      }
+
+                      override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                      override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+                  })
+                  parent.addView(tv)
+                  parent.addView(sb, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+              }
+
+              private fun addCheck(parent: LinearLayout, label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+                  val cb = CheckBox(this)
+                  cb.text = label
+                  cb.textSize = 15f
+                  cb.isChecked = checked
+                  cb.setOnCheckedChangeListener { _, b -> onChange(b) }
+                  parent.addView(cb)
+              }
+
+              private fun swatchDrawable(color: Int): GradientDrawable {
+                  val g = GradientDrawable()
+                  g.shape = GradientDrawable.OVAL
+                  g.setColor(color)
+                  g.setStroke(dp(2), 0xFF9E9E9E.toInt())
+                  return g
+              }
+
+              private fun addColor(
+                  parent: LinearLayout, label: String, getter: (Settings) -> Int, setter: (Settings, Int) -> Settings
+              ) {
+                  val row = LinearLayout(this)
+                  row.orientation = LinearLayout.HORIZONTAL
+                  row.gravity = Gravity.CENTER_VERTICAL
+                  row.setPadding(0, dp(6), 0, dp(6))
+                  val tv = TextView(this)
+                  tv.text = label
+                  tv.textSize = 15f
+                  tv.setTextColor(0xFF212121.toInt())
+                  val sw = View(this)
+                  sw.background = swatchDrawable(getter(s))
+                  row.addView(tv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                  row.addView(sw, LinearLayout.LayoutParams(dp(40), dp(40)))
+                  row.setOnClickListener {
+                      pickColor(label, getter(s)) { c ->
+                          update(setter(s, c))
+                          sw.background = swatchDrawable(c)
+                      }
+                  }
+                  parent.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+              }
+
+              private fun pickColor(title: String, current: Int, onPick: (Int) -> Unit) {
+                  val box = LinearLayout(this)
+                  box.orientation = LinearLayout.VERTICAL
+                  box.setPadding(dp(16), dp(8), dp(16), dp(8))
+                  var dialog: AlertDialog? = null
+
+                  var i = 0
+                  while (i < presets.size) {
+                      val row = LinearLayout(this)
+                      row.orientation = LinearLayout.HORIZONTAL
+                      row.gravity = Gravity.CENTER
+                      for (j in i until minOf(i + 6, presets.size)) {
+                          val c = presets[j]
+                          val v = View(this)
+                          v.background = swatchDrawable(c)
+                          v.setOnClickListener {
+                              onPick(c)
+                              dialog?.dismiss()
+                          }
+                          val lp = LinearLayout.LayoutParams(dp(40), dp(40))
+                          lp.setMargins(dp(4), dp(4), dp(4), dp(4))
+                          row.addView(v, lp)
+                      }
+                      box.addView(row)
+                      i += 6
+                  }
+
+                  val hex = EditText(this)
+                  hex.hint = "Mã màu, ví dụ #FF5722"
+                  hex.setText(String.format("#%06X", current and 0xFFFFFF))
+                  hex.inputType = InputType.TYPE_CLASS_TEXT
+                  box.addView(hex)
+
+                  val dlg = AlertDialog.Builder(this)
+                      .setTitle(title)
+                      .setView(box)
+                      .setPositiveButton("Áp dụng") { _, _ ->
+                          try {
+                              val c = Color.parseColor(hex.text.toString().trim()) or 0xFF000000.toInt()
+                              onPick(c)
+                          } catch (e: IllegalArgumentException) {
+                              // mã màu sai: bỏ qua
+                          }
+                      }
+                      .setNegativeButton("Hủy", null)
+                      .create()
+                  dialog = dlg
+                  dlg.show()
+              }
+          }
+          AMLICH_EOF
+          mkdir -p "app/src/main/java/vn/amlich/app"
           cat > "app/src/main/java/vn/amlich/app/WidgetUpdater.kt" <<'AMLICH_EOF'
           package vn.amlich.app
 
@@ -622,6 +968,10 @@ jobs:
           import android.content.Intent
           import android.graphics.Bitmap
           import android.graphics.Canvas
+          import android.graphics.Paint
+          import android.graphics.RectF
+          import android.util.TypedValue
+          import android.view.View
           import android.widget.RemoteViews
           import java.util.Calendar
 
@@ -644,14 +994,57 @@ jobs:
                   return PendingIntent.getActivity(ctx, 0, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
               }
 
+              /** Kích thước widget hiện tại theo dp (chiều dọc). */
+              private fun sizeOf(mgr: AppWidgetManager, id: Int, defW: Float, defH: Float): Pair<Float, Float> {
+                  val o = mgr.getAppWidgetOptions(id)
+                  val w = o.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0)
+                  val h = o.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0)
+                  return Pair(if (w > 0) w.toFloat() else defW, if (h > 0) h.toFloat() else defH)
+              }
+
               fun updateDay(ctx: Context, mgr: AppWidgetManager, id: Int) {
+                  val (w, h) = sizeOf(mgr, id, 110f, 110f)
+                  mgr.updateAppWidget(id, buildDay(ctx, w, h))
+              }
+
+              fun updateMonth(ctx: Context, mgr: AppWidgetManager, id: Int) {
+                  val (w, h) = sizeOf(mgr, id, 250f, 250f)
+                  mgr.updateAppWidget(id, buildMonth(ctx, w, h))
+              }
+
+              private fun bgBitmap(ctx: Context, wDp: Float, hDp: Float, s: Settings): Bitmap {
+                  val dens = ctx.resources.displayMetrics.density
+                  var wp = (wDp * dens).toInt().coerceAtLeast(40)
+                  var hp = (hDp * dens).toInt().coerceAtLeast(40)
+                  val m = maxOf(wp, hp)
+                  if (m > 800) {
+                      val k = 800f / m
+                      wp = (wp * k).toInt().coerceAtLeast(40)
+                      hp = (hp * k).toInt().coerceAtLeast(40)
+                  }
+                  val bmp = Bitmap.createBitmap(wp, hp, Bitmap.Config.ARGB_8888)
+                  val c = Canvas(bmp)
+                  val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+                  val a = (s.bgAlpha.coerceIn(0, 100) * 255 / 100)
+                  paint.color = (s.bgColor and 0x00FFFFFF) or (a shl 24)
+                  val r = 22f * (wp / wDp)
+                  c.drawRoundRect(RectF(0f, 0f, wp.toFloat(), hp.toFloat()), r, r, paint)
+                  return bmp
+              }
+
+              fun buildDay(ctx: Context, wDp: Float, hDp: Float): RemoteViews {
+                  val s = Prefs.load(ctx)
+                  val dens = ctx.resources.displayMetrics.density
                   val c = Calendar.getInstance()
                   val d = c.get(Calendar.DAY_OF_MONTH)
                   val m = c.get(Calendar.MONTH) + 1
                   val y = c.get(Calendar.YEAR)
                   val l = LunarCalendar.toLunar(d, m, y)
+                  val sc = (minOf(wDp, hDp) / 110f).coerceIn(0.5f, 1.7f)
 
                   val rv = RemoteViews(ctx.packageName, R.layout.widget_day)
+                  rv.setImageViewBitmap(R.id.img_bg, bgBitmap(ctx, wDp, hDp, s))
+
                   rv.setTextViewText(R.id.tv_dow, LunarCalendar.dowName(d, m, y) + ", " + d + "/" + m)
                   rv.setTextViewText(R.id.tv_lunar_day, l.day.toString())
                   rv.setTextViewText(R.id.tv_lunar_month, LunarCalendar.lunarMonthLabel(l) + " âm lịch")
@@ -660,27 +1053,53 @@ jobs:
                       R.id.tv_event,
                       LunarCalendar.eventOf(d, m, l).ifEmpty { "Ngày " + LunarCalendar.dayName(d, m, y) }
                   )
+
+                  rv.setTextViewTextSize(R.id.tv_dow, TypedValue.COMPLEX_UNIT_SP, s.dateSp * sc)
+                  rv.setTextViewTextSize(R.id.tv_lunar_day, TypedValue.COMPLEX_UNIT_SP, s.numberSp * sc)
+                  rv.setTextViewTextSize(R.id.tv_lunar_month, TypedValue.COMPLEX_UNIT_SP, s.monthSp * sc)
+                  rv.setTextViewTextSize(R.id.tv_year, TypedValue.COMPLEX_UNIT_SP, maxOf(s.monthSp - 2, 7) * sc)
+                  rv.setTextViewTextSize(R.id.tv_event, TypedValue.COMPLEX_UNIT_SP, maxOf(s.monthSp - 3, 7) * sc)
+
+                  rv.setTextColor(R.id.tv_dow, s.subColor)
+                  rv.setTextColor(R.id.tv_lunar_day, s.numberColor)
+                  rv.setTextColor(R.id.tv_lunar_month, s.textColor)
+                  rv.setTextColor(R.id.tv_year, s.textColor)
+                  rv.setTextColor(R.id.tv_event, s.eventColor)
+
+                  fun vis(show: Boolean) = if (show) View.VISIBLE else View.GONE
+                  rv.setViewVisibility(R.id.tv_dow, vis(hDp >= 60f))
+                  rv.setViewVisibility(R.id.tv_lunar_month, vis(hDp >= 70f))
+                  rv.setViewVisibility(R.id.tv_year, vis(s.showYear && hDp >= 90f))
+                  rv.setViewVisibility(R.id.tv_event, vis(s.showEvent && hDp >= 100f))
+
+                  val pad = (6 * dens * sc).toInt()
+                  rv.setViewPadding(R.id.ll_content, pad, pad, pad, pad)
                   rv.setOnClickPendingIntent(R.id.widget_root, openAppIntent(ctx))
-                  mgr.updateAppWidget(id, rv)
+                  return rv
               }
 
-              fun updateMonth(ctx: Context, mgr: AppWidgetManager, id: Int) {
+              fun buildMonth(ctx: Context, wDp: Float, hDp: Float): RemoteViews {
+                  val s = Prefs.load(ctx)
                   val c = Calendar.getInstance()
                   val d = c.get(Calendar.DAY_OF_MONTH)
                   val m = c.get(Calendar.MONTH) + 1
                   val y = c.get(Calendar.YEAR)
                   val l = LunarCalendar.toLunar(d, m, y)
 
-                  val size = 840
-                  val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                  val bmp = bgBitmap(ctx, wDp, hDp, s)
                   val canvas = Canvas(bmp)
+                  val pad = minOf(bmp.width, bmp.height) * 0.03f
+                  canvas.translate(pad, pad)
                   val title = "Tháng $m/$y  ·  ${l.day}/${l.month}" + (if (l.leap) " nhuận" else "") + " ÂL"
-                  MonthRenderer.draw(canvas, size.toFloat(), size.toFloat(), y, m, y, m, d, 0, title)
+                  val style = MonthRenderer.Style(s.textColor, s.subColor, s.numberColor, s.eventColor, s.calScale / 100f)
+                  MonthRenderer.draw(
+                      canvas, bmp.width - 2 * pad, bmp.height - 2 * pad, y, m, y, m, d, 0, title, style
+                  )
 
                   val rv = RemoteViews(ctx.packageName, R.layout.widget_month)
                   rv.setImageViewBitmap(R.id.img_month, bmp)
                   rv.setOnClickPendingIntent(R.id.widget_root, openAppIntent(ctx))
-                  mgr.updateAppWidget(id, rv)
+                  return rv
               }
 
               fun scheduleMidnight(ctx: Context) {
@@ -709,11 +1128,18 @@ jobs:
           import android.content.BroadcastReceiver
           import android.content.Context
           import android.content.Intent
+          import android.os.Bundle
 
           class DayWidgetProvider : AppWidgetProvider() {
               override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
                   for (id in appWidgetIds) WidgetUpdater.updateDay(context, appWidgetManager, id)
                   WidgetUpdater.scheduleMidnight(context)
+              }
+
+              override fun onAppWidgetOptionsChanged(
+                  context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int, newOptions: Bundle
+              ) {
+                  WidgetUpdater.updateDay(context, appWidgetManager, appWidgetId)
               }
           }
 
@@ -721,6 +1147,12 @@ jobs:
               override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
                   for (id in appWidgetIds) WidgetUpdater.updateMonth(context, appWidgetManager, id)
                   WidgetUpdater.scheduleMidnight(context)
+              }
+
+              override fun onAppWidgetOptionsChanged(
+                  context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int, newOptions: Bundle
+              ) {
+                  WidgetUpdater.updateMonth(context, appWidgetManager, appWidgetId)
               }
           }
 
@@ -746,72 +1178,87 @@ jobs:
                   android:pathData="M60,22 A32,32 0 1 0 60,86 A25,25 0 1 1 60,22 Z" />
           </vector>
           AMLICH_EOF
-          mkdir -p "app/src/main/res/drawable"
-          cat > "app/src/main/res/drawable/widget_bg.xml" <<'AMLICH_EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <shape xmlns:android="http://schemas.android.com/apk/res/android"
-              android:shape="rectangle">
-              <solid android:color="#F5FFFFFF" />
-              <corners android:radius="22dp" />
-          </shape>
-          AMLICH_EOF
           mkdir -p "app/src/main/res/layout"
           cat > "app/src/main/res/layout/widget_day.xml" <<'AMLICH_EOF'
           <?xml version="1.0" encoding="utf-8"?>
-          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
               android:id="@+id/widget_root"
               android:layout_width="match_parent"
-              android:layout_height="match_parent"
-              android:background="@drawable/widget_bg"
-              android:gravity="center"
-              android:orientation="vertical"
-              android:padding="10dp">
+              android:layout_height="match_parent">
 
-              <TextView
-                  android:id="@+id/tv_dow"
-                  android:layout_width="wrap_content"
-                  android:layout_height="wrap_content"
-                  android:text="Thứ Sáu, 23/10"
-                  android:textColor="#757575"
-                  android:textSize="13sp" />
+              <ImageView
+                  android:id="@+id/img_bg"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent"
+                  android:contentDescription="@null"
+                  android:scaleType="fitXY" />
 
-              <TextView
-                  android:id="@+id/tv_lunar_day"
-                  android:layout_width="wrap_content"
-                  android:layout_height="wrap_content"
-                  android:text="14"
-                  android:textColor="#E53935"
-                  android:textSize="56sp"
-                  android:textStyle="bold" />
+              <LinearLayout
+                  android:id="@+id/ll_content"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent"
+                  android:gravity="center"
+                  android:orientation="vertical"
+                  android:padding="6dp">
 
-              <TextView
-                  android:id="@+id/tv_lunar_month"
-                  android:layout_width="wrap_content"
-                  android:layout_height="wrap_content"
-                  android:text="Tháng 9 âm lịch"
-                  android:textColor="#212121"
-                  android:textSize="14sp"
-                  android:textStyle="bold" />
+                  <TextView
+                      android:id="@+id/tv_dow"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:ellipsize="end"
+                      android:includeFontPadding="false"
+                      android:maxLines="1"
+                      android:text="Thứ Sáu, 23/10"
+                      android:textColor="#757575"
+                      android:textSize="13sp" />
 
-              <TextView
-                  android:id="@+id/tv_year"
-                  android:layout_width="wrap_content"
-                  android:layout_height="wrap_content"
-                  android:text="Năm Bính Ngọ"
-                  android:textColor="#424242"
-                  android:textSize="12sp" />
+                  <TextView
+                      android:id="@+id/tv_lunar_day"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:includeFontPadding="false"
+                      android:maxLines="1"
+                      android:text="14"
+                      android:textColor="#E53935"
+                      android:textSize="48sp"
+                      android:textStyle="bold" />
 
-              <TextView
-                  android:id="@+id/tv_event"
-                  android:layout_width="wrap_content"
-                  android:layout_height="wrap_content"
-                  android:layout_marginTop="2dp"
-                  android:ellipsize="end"
-                  android:maxLines="1"
-                  android:text="Ngày Canh Dần"
-                  android:textColor="#EF6C00"
-                  android:textSize="11sp" />
-          </LinearLayout>
+                  <TextView
+                      android:id="@+id/tv_lunar_month"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:ellipsize="end"
+                      android:includeFontPadding="false"
+                      android:maxLines="1"
+                      android:text="Tháng 9 âm lịch"
+                      android:textColor="#212121"
+                      android:textSize="14sp"
+                      android:textStyle="bold" />
+
+                  <TextView
+                      android:id="@+id/tv_year"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:ellipsize="end"
+                      android:includeFontPadding="false"
+                      android:maxLines="1"
+                      android:text="Năm Bính Ngọ"
+                      android:textColor="#212121"
+                      android:textSize="12sp" />
+
+                  <TextView
+                      android:id="@+id/tv_event"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="2dp"
+                      android:ellipsize="end"
+                      android:includeFontPadding="false"
+                      android:maxLines="1"
+                      android:text="Ngày Canh Dần"
+                      android:textColor="#EF6C00"
+                      android:textSize="11sp" />
+              </LinearLayout>
+          </FrameLayout>
           AMLICH_EOF
           mkdir -p "app/src/main/res/layout"
           cat > "app/src/main/res/layout/widget_month.xml" <<'AMLICH_EOF'
@@ -819,16 +1266,14 @@ jobs:
           <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
               android:id="@+id/widget_root"
               android:layout_width="match_parent"
-              android:layout_height="match_parent"
-              android:background="@drawable/widget_bg"
-              android:padding="8dp">
+              android:layout_height="match_parent">
 
               <ImageView
                   android:id="@+id/img_month"
                   android:layout_width="match_parent"
                   android:layout_height="match_parent"
                   android:contentDescription="Lịch tháng"
-                  android:scaleType="fitCenter" />
+                  android:scaleType="fitXY" />
           </FrameLayout>
           AMLICH_EOF
           mkdir -p "app/src/main/res/values"
@@ -845,9 +1290,13 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
               android:initialLayout="@layout/widget_day"
-              android:minWidth="110dp"
-              android:minHeight="110dp"
+              android:minWidth="40dp"
+              android:minHeight="40dp"
+              android:minResizeWidth="40dp"
+              android:minResizeHeight="40dp"
               android:resizeMode="horizontal|vertical"
+              android:targetCellWidth="2"
+              android:targetCellHeight="2"
               android:updatePeriodMillis="1800000"
               android:widgetCategory="home_screen" />
           AMLICH_EOF
@@ -856,9 +1305,13 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
               android:initialLayout="@layout/widget_month"
-              android:minWidth="250dp"
-              android:minHeight="250dp"
+              android:minWidth="110dp"
+              android:minHeight="110dp"
+              android:minResizeWidth="110dp"
+              android:minResizeHeight="110dp"
               android:resizeMode="horizontal|vertical"
+              android:targetCellWidth="4"
+              android:targetCellHeight="3"
               android:updatePeriodMillis="1800000"
               android:widgetCategory="home_screen" />
           AMLICH_EOF
@@ -868,6 +1321,56 @@ jobs:
               id 'org.jetbrains.kotlin.android' version '1.9.24' apply false
           }
           AMLICH_EOF
+          cat > debug.keystore.b64 <<'AMLICH_EOF'
+          MIIKZgIBAzCCChAGCSqGSIb3DQEHAaCCCgEEggn9MIIJ+TCCBcAGCSqGSIb3DQEHAaCCBbEEggWt
+          MIIFqTCCBaUGCyqGSIb3DQEMCgECoIIFQDCCBTwwZgYJKoZIhvcNAQUNMFkwOAYJKoZIhvcNAQUM
+          MCsEFOsqsVFGi4dcFyqu6EC3XOCbRTzwAgInEAIBIDAMBggqhkiG9w0CCQUAMB0GCWCGSAFlAwQB
+          KgQQdsw4p4Z/6FxmjWTYRkUQRQSCBNAxCgV9YqrCAWoEKw0QecnStjx+ervk2jNd/MNgBJ9TSTIX
+          fw9zuLbF7Oc4hjo3yY2JBorbXfnYpSfYHu1fdCQsV8ZqfhL0bVgP1IThlAMnGSXV6NPWhN4UIjav
+          +p0/xZyBbN5fjz4qwhuoFYpmrZz+UFhPSwY0Wr6XYrLgz3VBVjgYW+ex3SegDjrfspPS5B++R0Iu
+          43iYfSB6Rfd/Xz4Pei+TjUriVIs9l+k89S1Ddci4zBJI8+YJKQniATVbyik1CdERiudk/CW5sZnw
+          VpS0vfhL7Fqd6rqwK12FyNZofYCQNNqD1HglnFbP7yJgmXkVYkqKFwnIH9O0mpN+syZYAztP27vx
+          b6pPvFO9iGVeLYV8IJ99r6GGMIz/YaNibFnjsnNORCjNA7xJOPK5noAK2GOmOW+DtUNaEORmXgsh
+          cTkKyOIh1PFOf0GBDN00SeqLrqaZORvIxuNv1UyDTrUfITDaMIfcRMbaeef8nnFMHQKHPSnfGTXN
+          eHLKuRufHFtZpAKpeh0GOt4oaZZKne1/yCge1OzHtxw29mTfXASoisTFFBZQDfxjQLXneV37tF3D
+          ON46h2YcOZ+YbNtJaF83csvgMWIpdqLkZsm+KsE+/LkgcrSgy0Wlb3s3G3+WHSOsIE3aqr82aNRZ
+          g6GG87AK+/3Sg++56MRKvlIDMcvdJhpHQcQA6PrgJGT7uq50WQ5p5Yg4JB+EXWevg954DqLYNCI9
+          pRCCtSXDYpKdNx+BPRuHKqcVzG+4nPONUIElxWgDx/m6Ae05HnUup6yaNsLPEoZu7oTK/PFYIIIw
+          gTgfjnS556PNQGASrIBCucuohobB6RZonIYmjz1QbXl+P4p7JQj12dtVHp5FiysQIeavF+mvmK/t
+          JKtaDBFceyvGwr91rjAbGfkEESksNjh/CiCRKwuNXt7t74bmol+XEwcI+gz83g8RDrkVl+yJ4aNy
+          UCb+3P1kOnsyMu2swnYFCyylEYvksAz4xEZsKXI5jzpQ89+ylezg0PF8qZPUJoU9Conayxd0Jb56
+          8LanQVo66kP6/GJobEkUguYLcIZWq3wbEhMjMhEuzzXDsHLRWVPiXyuj/UjROxh34/gjBLZkmREU
+          QtkbSG0qunRYqLCaHNm4O52hD1fz5Qi8zJUVtRiLRMM+XKfY6C/eKTbI4I7gSi+fQE436AC+gjyf
+          XIja/ij4kPjqICiKIkE2bNB4Bm9OTKCHHTK7h42rJAnvsPZwspkBVzyK87blokM9JRi0+iI0jDfk
+          8Ym15IgtmSB49IQTy5lyJQHzdyneK/cCUZtdXYVc+Vsdexfean6UdvywmWWXsAfRdhz/tACAoNuP
+          HB9XwKLDpuV9Rpf25p5XVc/J7F6vXfVz26Id89FZO82ltGqi2LANVuo1HiebilZK++0VJJOUTROy
+          uJ1fJNlpJrtRG9ebItjemvu17SZxdinIr6yXRN8p1p1drWtpGcUwPt1qSwRqtRRCYlSSsMwf+7QA
+          8eSRZKinwCxtpkobq0qXNgG4wOZjOn0GjFWXIVGPSsf5TOKQuI71PNhIBoh7rtVyayHMsJ3TOz5B
+          oIfBiXdyCTrfVgcgqhIAVfena231E6F5MCwc2XUpoy3qKAfh/qJ1eBtS6cbKreQZrekITQrLoHTH
+          9jFSMC0GCSqGSIb3DQEJFDEgHh4AYQBuAGQAcgBvAGkAZABkAGUAYgB1AGcAawBlAHkwIQYJKoZI
+          hvcNAQkVMRQEElRpbWUgMTc5Mjg0MzM4MDU5NDCCBDEGCSqGSIb3DQEHBqCCBCIwggQeAgEAMIIE
+          FwYJKoZIhvcNAQcBMGYGCSqGSIb3DQEFDTBZMDgGCSqGSIb3DQEFDDArBBRq86M1T0sTX4H+7LT1
+          ahynMF7LtAICJxACASAwDAYIKoZIhvcNAgkFADAdBglghkgBZQMEASoEEH4OLGTZj9BgfGAIvL27
+          HryAggOgbbFwtbSl3G6vciOFxF9A1Whsj/pK0byKpb0QnSioa5269d33OeF98coLc5oWYnJujQVq
+          Tcrn5x3yJl8/gBm03V2kVy67ZcEeufMC7ILR5I7hRucwjPslUzM7UKSJCS8m97vS39EKzCC+Q+Rx
+          i+3Acz0m2Oz+xwZq1Ksxn5EdvNUL39fmnNXB2/oDe22DhTGfFzSbJnYFfx9SKhm4ut8q1DMZvbxw
+          5fsKvMN1YuRgJlLgSI97n3gTJqbX6vArcOh47XcvITxr5Q5ikww6UUuOmu/SLZ5Gs/jfpxvrWSEi
+          a/O2OiSwy4aqidIpI3kKdF4+6D43gzGafgR/A9OHgaTXHO8UJi4pX0hIiH8RfKzERgdSAL5zF14N
+          E2Y99JZbf/IHaywZnPFEnXNxVwrwQCmci6FAFqwsvdiBnC4SFajUw9ItZO1hKBbhAxYQgZSKMT8L
+          BudSSUe0gOUanSXkP5prjNC5kuvsuGAsQAa/LVkIZwzXs5s4Mw833y17WHineIzDBHGIXdHX+1qZ
+          8RVkny9Fhsn1bbTiUvwDbmAAKM1Oe4CieYumYu64bz9dvTNUBajkuN6aimb3Nv4q9Zctu4CADPaA
+          ZaJVvHdnWyeq644CT1aKlCQN04upZqcty04etTj1eVUAqe7C1RxkVLRkkxdI97I5URdbG26QjLFX
+          G06wQlCao36fy7zmKqHYTVMkWTcX/wJxQEm+3oM1/zUAkzWbRTV7XdELz1KAd6d79stV3jr2x8VC
+          CohuE7iC6VOWw6vzs4bHzM55OpxQ7vr6u+ImQMm2I2i8Q1Ag2LanP7C9JBc0Xpy+WyU/ZdEYPYlO
+          DnnWFfIeYeiupCa7W35H10aAr5sUVDaeqWKJdBGptdtl3rAnIPuhSxAtZVnv9KmMZ/Tt//QCr0rb
+          3bGT7eU0YYFgP7K/zboqSTMWc9pTyFuOAOmE/SU9N6aNVb+iub0dVsG/O+RyUE9Z8y8XpUB4Yqu/
+          3vaSA6LYlkrADmUTNrWOdoZGuIAb9CgVkwubMtuKcDsOhqZ7ZqvOfy9TRYJAsgN0FckqNm1A0hgG
+          GfwEs2FOfG5MZWjK1yvlQnMLDlZVXu9kiVzEzpUqD2pc5oa95w9HKLUt1UK8P26JDcRtJaGVK/1W
+          aL214iaP/PD/7lY248lwVIGtWc7f4uX4Jy4pi7TQsBWrlfqs2954vuC79DK8jC1FuSg83ZYVkWfx
+          0ytUwda+c2RUK17ByOOcr+JcnVAA3jBNMDEwDQYJYIZIAWUDBAIBBQAEIEgZcfPvJorltXRJFMew
+          qzcH4e5lUaR9ECnCi4FFxtPHBBTXDoHx1Sjr7maxV8rvvZJoANB2lgICJxA=
+          AMLICH_EOF
+          base64 -d debug.keystore.b64 > debug.keystore
           cat > "gradle.properties" <<'AMLICH_EOF'
           org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
           android.nonTransitiveRClass=true
