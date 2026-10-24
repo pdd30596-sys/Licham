@@ -1,0 +1,906 @@
+name: Build APK Lich Am
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tao ma nguon du an
+        run: |
+          mkdir -p "$HOME/amlich" && cd "$HOME/amlich"
+          mkdir -p "app"
+          cat > "app/build.gradle" <<'AMLICH_EOF'
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+
+          android {
+              namespace 'vn.amlich.app'
+              compileSdk 34
+
+              defaultConfig {
+                  applicationId "vn.amlich.app"
+                  minSdk 26
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                  }
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = '17'
+              }
+              lint {
+                  abortOnError false
+                  checkReleaseBuilds false
+              }
+          }
+          AMLICH_EOF
+          mkdir -p "app/src/main"
+          cat > "app/src/main/AndroidManifest.xml" <<'AMLICH_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <application
+                  android:allowBackup="true"
+                  android:icon="@drawable/ic_launcher"
+                  android:label="@string/app_name"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <receiver
+                      android:name=".DayWidgetProvider"
+                      android:exported="true"
+                      android:label="@string/widget_day_label">
+                      <intent-filter>
+                          <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.appwidget.provider"
+                          android:resource="@xml/widget_day_info" />
+                  </receiver>
+
+                  <receiver
+                      android:name=".MonthWidgetProvider"
+                      android:exported="true"
+                      android:label="@string/widget_month_label">
+                      <intent-filter>
+                          <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.appwidget.provider"
+                          android:resource="@xml/widget_month_info" />
+                  </receiver>
+
+                  <receiver
+                      android:name=".RefreshReceiver"
+                      android:exported="false">
+                      <intent-filter>
+                          <action android:name="vn.amlich.app.REFRESH" />
+                          <action android:name="android.intent.action.DATE_CHANGED" />
+                          <action android:name="android.intent.action.TIME_SET" />
+                          <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                      </intent-filter>
+                  </receiver>
+              </application>
+          </manifest>
+          AMLICH_EOF
+          mkdir -p "app/src/main/java/vn/amlich/app"
+          cat > "app/src/main/java/vn/amlich/app/LunarCalendar.kt" <<'AMLICH_EOF'
+          package vn.amlich.app
+
+          import java.util.Calendar
+          import kotlin.math.PI
+          import kotlin.math.floor
+          import kotlin.math.sin
+
+          /** Chuyển đổi dương lịch -> âm lịch Việt Nam (múi giờ UTC+7), thuật toán Hồ Ngọc Đức. */
+          object LunarCalendar {
+              private const val TZ = 7.0
+
+              data class Lunar(val day: Int, val month: Int, val year: Int, val leap: Boolean)
+
+              private val CAN = arrayOf("Giáp", "Ất", "Bính", "Đinh", "Mậu", "Kỷ", "Canh", "Tân", "Nhâm", "Quý")
+              private val CHI = arrayOf("Tý", "Sửu", "Dần", "Mão", "Thìn", "Tỵ", "Ngọ", "Mùi", "Thân", "Dậu", "Tuất", "Hợi")
+              private val DOW = arrayOf("Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy")
+
+              fun jdFromDate(dd: Int, mm: Int, yy: Int): Int {
+                  val a = (14 - mm) / 12
+                  val y = yy + 4800 - a
+                  val m = mm + 12 * a - 3
+                  var jd = dd + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045
+                  if (jd < 2299161) {
+                      jd = dd + (153 * m + 2) / 5 + 365 * y + y / 4 - 32083
+                  }
+                  return jd
+              }
+
+              private fun newMoon(k: Int): Double {
+                  val kd = k.toDouble()
+                  val t = kd / 1236.85
+                  val t2 = t * t
+                  val t3 = t2 * t
+                  val dr = PI / 180
+                  var jd1 = 2415020.75933 + 29.53058868 * kd + 0.0001178 * t2 - 0.000000155 * t3
+                  jd1 += 0.00033 * sin((166.56 + 132.87 * t - 0.009173 * t2) * dr)
+                  val m = 359.2242 + 29.10535608 * kd - 0.0000333 * t2 - 0.00000347 * t3
+                  val mpr = 306.0253 + 385.81691806 * kd + 0.0107306 * t2 + 0.00001236 * t3
+                  val f = 21.2964 + 390.67050646 * kd - 0.0016528 * t2 - 0.00000239 * t3
+                  var c1 = (0.1734 - 0.000393 * t) * sin(m * dr) + 0.0021 * sin(2 * dr * m)
+                  c1 = c1 - 0.4068 * sin(mpr * dr) + 0.0161 * sin(dr * 2 * mpr)
+                  c1 -= 0.0004 * sin(dr * 3 * mpr)
+                  c1 = c1 + 0.0104 * sin(dr * 2 * f) - 0.0051 * sin(dr * (m + mpr))
+                  c1 = c1 - 0.0074 * sin(dr * (m - mpr)) + 0.0004 * sin(dr * (2 * f + m))
+                  c1 = c1 - 0.0004 * sin(dr * (2 * f - m)) - 0.0006 * sin(dr * (2 * f + mpr))
+                  c1 = c1 + 0.0010 * sin(dr * (2 * f - mpr)) + 0.0005 * sin(dr * (2 * mpr + m))
+                  val deltat = if (t < -11) {
+                      0.001 + 0.000839 * t + 0.0002261 * t2 - 0.00000845 * t3 - 0.000000081 * t * t3
+                  } else {
+                      -0.000278 + 0.000265 * t + 0.000262 * t2
+                  }
+                  return jd1 + c1 - deltat
+              }
+
+              private fun sunLongitude(jdn: Double): Double {
+                  val t = (jdn - 2451545.0) / 36525
+                  val t2 = t * t
+                  val dr = PI / 180
+                  val m = 357.52910 + 35999.05030 * t - 0.0001559 * t2 - 0.00000048 * t * t2
+                  val l0 = 280.46645 + 36000.76983 * t + 0.0003032 * t2
+                  var dl = (1.914600 - 0.004817 * t - 0.000014 * t2) * sin(dr * m)
+                  dl += (0.019993 - 0.000101 * t) * sin(dr * 2 * m) + 0.000290 * sin(dr * 3 * m)
+                  val l = (l0 + dl) * dr
+                  return l - PI * 2 * floor(l / (PI * 2))
+              }
+
+              private fun sunLongitudeIndex(dayNumber: Int): Int =
+                  floor(sunLongitude(dayNumber - 0.5 - TZ / 24) / PI * 6).toInt()
+
+              private fun newMoonDay(k: Int): Int = floor(newMoon(k) + 0.5 + TZ / 24).toInt()
+
+              private fun lunarMonth11(yy: Int): Int {
+                  val off = jdFromDate(31, 12, yy) - 2415021
+                  val k = floor(off / 29.530588853).toInt()
+                  var nm = newMoonDay(k)
+                  if (sunLongitudeIndex(nm) >= 9) nm = newMoonDay(k - 1)
+                  return nm
+              }
+
+              private fun leapMonthOffset(a11: Int): Int {
+                  val k = floor((a11 - 2415021.076998695) / 29.530588853 + 0.5).toInt()
+                  var i = 1
+                  var arc = sunLongitudeIndex(newMoonDay(k + i))
+                  var last: Int
+                  do {
+                      last = arc
+                      i++
+                      arc = sunLongitudeIndex(newMoonDay(k + i))
+                  } while (arc != last && i < 14)
+                  return i - 1
+              }
+
+              fun toLunar(dd: Int, mm: Int, yy: Int): Lunar {
+                  val dayNumber = jdFromDate(dd, mm, yy)
+                  val k = floor((dayNumber - 2415021.076998695) / 29.530588853).toInt()
+                  var monthStart = newMoonDay(k + 1)
+                  if (monthStart > dayNumber) monthStart = newMoonDay(k)
+                  var a11 = lunarMonth11(yy)
+                  var b11 = a11
+                  var lunarYear: Int
+                  if (a11 >= monthStart) {
+                      lunarYear = yy
+                      a11 = lunarMonth11(yy - 1)
+                  } else {
+                      lunarYear = yy + 1
+                      b11 = lunarMonth11(yy + 1)
+                  }
+                  val lunarDay = dayNumber - monthStart + 1
+                  val diff = (monthStart - a11) / 29
+                  var leap = false
+                  var lunarMonth = diff + 11
+                  if (b11 - a11 > 365) {
+                      val leapOff = leapMonthOffset(a11)
+                      if (diff >= leapOff) {
+                          lunarMonth = diff + 10
+                          if (diff == leapOff) leap = true
+                      }
+                  }
+                  if (lunarMonth > 12) lunarMonth -= 12
+                  if (lunarMonth >= 11 && diff < 4) lunarYear -= 1
+                  return Lunar(lunarDay, lunarMonth, lunarYear, leap)
+              }
+
+              fun yearName(lunarYear: Int): String =
+                  CAN[(lunarYear + 6) % 10] + " " + CHI[(lunarYear + 8) % 12]
+
+              fun monthName(l: Lunar): String =
+                  CAN[(l.year * 12 + l.month + 3) % 10] + " " + CHI[(l.month + 1) % 12]
+
+              fun dayName(dd: Int, mm: Int, yy: Int): String {
+                  val jd = jdFromDate(dd, mm, yy)
+                  return CAN[(jd + 9) % 10] + " " + CHI[(jd + 1) % 12]
+              }
+
+              fun dowName(dd: Int, mm: Int, yy: Int): String {
+                  val c = Calendar.getInstance()
+                  c.clear()
+                  c.set(yy, mm - 1, dd)
+                  return DOW[c.get(Calendar.DAY_OF_WEEK) - 1]
+              }
+
+              private val SOLAR_EVENTS = mapOf(
+                  "1/1" to "Tết Dương lịch",
+                  "14/2" to "Valentine",
+                  "8/3" to "Quốc tế Phụ nữ",
+                  "30/4" to "Giải phóng miền Nam",
+                  "1/5" to "Quốc tế Lao động",
+                  "1/6" to "Quốc tế Thiếu nhi",
+                  "2/9" to "Quốc khánh",
+                  "20/10" to "Phụ nữ Việt Nam",
+                  "20/11" to "Nhà giáo Việt Nam",
+                  "24/12" to "Đêm Giáng sinh"
+              )
+
+              private val LUNAR_EVENTS = mapOf(
+                  "1/1" to "Tết Nguyên Đán",
+                  "15/1" to "Tết Nguyên Tiêu",
+                  "10/3" to "Giỗ Tổ Hùng Vương",
+                  "15/4" to "Lễ Phật Đản",
+                  "5/5" to "Tết Đoan Ngọ",
+                  "15/7" to "Lễ Vu Lan",
+                  "15/8" to "Tết Trung Thu",
+                  "23/12" to "Ông Táo chầu trời"
+              )
+
+              /** Trả về tên sự kiện/ngày lễ của ngày (hoặc chuỗi rỗng). */
+              fun eventOf(dd: Int, mm: Int, l: Lunar): String {
+                  val list = ArrayList<String>()
+                  SOLAR_EVENTS["$dd/$mm"]?.let { list.add(it) }
+                  if (!l.leap) LUNAR_EVENTS["${l.day}/${l.month}"]?.let { list.add(it) }
+                  if (list.isEmpty()) {
+                      if (l.day == 1) list.add("Mùng 1 âm lịch")
+                      else if (l.day == 15) list.add("Rằm")
+                  }
+                  return list.joinToString(" · ")
+              }
+
+              fun lunarMonthLabel(l: Lunar): String = "Tháng ${l.month}" + (if (l.leap) " nhuận" else "")
+          }
+          AMLICH_EOF
+          mkdir -p "app/src/main/java/vn/amlich/app"
+          cat > "app/src/main/java/vn/amlich/app/MainActivity.kt" <<'AMLICH_EOF'
+          package vn.amlich.app
+
+          import android.app.Activity
+          import android.appwidget.AppWidgetManager
+          import android.content.ComponentName
+          import android.graphics.Color
+          import android.graphics.Typeface
+          import android.os.Build
+          import android.os.Bundle
+          import android.view.Gravity
+          import android.view.ViewGroup
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import android.widget.TextView
+          import android.widget.Toast
+          import java.util.Calendar
+
+          class MainActivity : Activity() {
+              private lateinit var monthView: MonthView
+              private lateinit var titleView: TextView
+              private lateinit var detail: TextView
+              private var year = 2026
+              private var month = 1
+
+              private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  val root = LinearLayout(this)
+                  root.orientation = LinearLayout.VERTICAL
+                  root.setBackgroundColor(0xFFFAFAFA.toInt())
+                  root.setPadding(dp(14), dp(14), dp(14), dp(14))
+                  root.fitsSystemWindows = true
+
+                  val header = LinearLayout(this)
+                  header.orientation = LinearLayout.HORIZONTAL
+                  header.gravity = Gravity.CENTER_VERTICAL
+
+                  val prev = Button(this)
+                  prev.text = "‹"
+                  prev.textSize = 22f
+                  prev.setOnClickListener { shift(-1) }
+
+                  titleView = TextView(this)
+                  titleView.textSize = 20f
+                  titleView.setTypeface(null, Typeface.BOLD)
+                  titleView.gravity = Gravity.CENTER
+                  titleView.setTextColor(0xFF212121.toInt())
+
+                  val next = Button(this)
+                  next.text = "›"
+                  next.textSize = 22f
+                  next.setOnClickListener { shift(1) }
+
+                  header.addView(prev, LinearLayout.LayoutParams(dp(64), ViewGroup.LayoutParams.WRAP_CONTENT))
+                  header.addView(titleView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                  header.addView(next, LinearLayout.LayoutParams(dp(64), ViewGroup.LayoutParams.WRAP_CONTENT))
+                  root.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+                  monthView = MonthView(this)
+                  monthView.onSelect = { day -> showDetail(day) }
+                  root.addView(monthView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+                  detail = TextView(this)
+                  detail.textSize = 16f
+                  detail.setTextColor(0xFF212121.toInt())
+                  detail.setBackgroundColor(Color.WHITE)
+                  detail.setPadding(dp(14), dp(12), dp(14), dp(12))
+                  val dlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                  dlp.topMargin = dp(8)
+                  root.addView(detail, dlp)
+
+                  val today = Button(this)
+                  today.text = "Hôm nay"
+                  today.setOnClickListener { goToday() }
+                  root.addView(today, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+                  val row = LinearLayout(this)
+                  row.orientation = LinearLayout.HORIZONTAL
+                  val addDay = Button(this)
+                  addDay.text = "+ Widget ngày"
+                  addDay.setOnClickListener { pinWidget(DayWidgetProvider::class.java) }
+                  val addMonth = Button(this)
+                  addMonth.text = "+ Widget tháng"
+                  addMonth.setOnClickListener { pinWidget(MonthWidgetProvider::class.java) }
+                  row.addView(addDay, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                  row.addView(addMonth, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                  root.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+                  setContentView(root)
+                  goToday()
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  WidgetUpdater.updateAll(this)
+              }
+
+              private fun goToday() {
+                  val c = Calendar.getInstance()
+                  year = c.get(Calendar.YEAR)
+                  month = c.get(Calendar.MONTH) + 1
+                  refresh(c.get(Calendar.DAY_OF_MONTH))
+              }
+
+              private fun shift(delta: Int) {
+                  month += delta
+                  if (month < 1) {
+                      month = 12
+                      year -= 1
+                  } else if (month > 12) {
+                      month = 1
+                      year += 1
+                  }
+                  val now = Calendar.getInstance()
+                  val sameMonth = now.get(Calendar.YEAR) == year && now.get(Calendar.MONTH) + 1 == month
+                  refresh(if (sameMonth) now.get(Calendar.DAY_OF_MONTH) else 1)
+              }
+
+              private fun refresh(day: Int) {
+                  titleView.text = "Tháng $month / $year"
+                  monthView.year = year
+                  monthView.month = month
+                  monthView.selected = day
+                  monthView.invalidate()
+                  showDetail(day)
+              }
+
+              private fun showDetail(day: Int) {
+                  val l = LunarCalendar.toLunar(day, month, year)
+                  val sb = StringBuilder()
+                  sb.append(LunarCalendar.dowName(day, month, year)).append(", ")
+                      .append(day).append('/').append(month).append('/').append(year).append('\n')
+                  sb.append("Âm lịch: ").append(l.day).append('/').append(l.month)
+                  if (l.leap) sb.append(" (nhuận)")
+                  sb.append(" năm ").append(LunarCalendar.yearName(l.year)).append('\n')
+                  sb.append("Ngày ").append(LunarCalendar.dayName(day, month, year))
+                      .append(" · Tháng ").append(LunarCalendar.monthName(l))
+                  val ev = LunarCalendar.eventOf(day, month, l)
+                  if (ev.isNotEmpty()) sb.append('\n').append(ev)
+                  detail.text = sb.toString()
+              }
+
+              private fun pinWidget(cls: Class<*>) {
+                  val mgr = AppWidgetManager.getInstance(this)
+                  if (Build.VERSION.SDK_INT >= 26 && mgr.isRequestPinAppWidgetSupported) {
+                      mgr.requestPinAppWidget(ComponentName(this, cls), null, null)
+                  } else {
+                      Toast.makeText(
+                          this,
+                          "Nhấn giữ màn hình chính → Widget → Lịch Âm để thêm",
+                          Toast.LENGTH_LONG
+                      ).show()
+                  }
+              }
+          }
+          AMLICH_EOF
+          mkdir -p "app/src/main/java/vn/amlich/app"
+          cat > "app/src/main/java/vn/amlich/app/MonthRenderer.kt" <<'AMLICH_EOF'
+          package vn.amlich.app
+
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.Paint
+          import android.graphics.Typeface
+          import java.util.Calendar
+
+          /** Vẽ lưới lịch tháng (dương + âm). Dùng chung cho màn hình chính và widget tháng. */
+          object MonthRenderer {
+              class Geo(val offset: Int, val days: Int, val rows: Int)
+
+              private val WEEKDAYS = arrayOf("T2", "T3", "T4", "T5", "T6", "T7", "CN")
+              private const val RED = 0xFFE53935.toInt()
+              private const val TEXT = 0xFF212121.toInt()
+              private const val SUB = 0xFF757575.toInt()
+              private const val ORANGE = 0xFFEF6C00.toInt()
+
+              fun geo(year: Int, month: Int): Geo {
+                  val c = Calendar.getInstance()
+                  c.clear()
+                  c.set(year, month - 1, 1)
+                  val dow = c.get(Calendar.DAY_OF_WEEK) // CN = 1
+                  val offset = (dow + 5) % 7 // thứ Hai = 0
+                  val days = c.getActualMaximum(Calendar.DAY_OF_MONTH)
+                  val rows = (offset + days + 6) / 7
+                  return Geo(offset, days, rows)
+              }
+
+              fun titleHeight(h: Float, hasTitle: Boolean): Float = if (hasTitle) h * 0.12f else 0f
+              fun weekdayHeight(h: Float): Float = h * 0.08f
+              fun gridTop(h: Float, hasTitle: Boolean): Float = titleHeight(h, hasTitle) + weekdayHeight(h)
+
+              fun draw(
+                  canvas: Canvas, w: Float, h: Float, year: Int, month: Int,
+                  todayY: Int, todayM: Int, todayD: Int, selected: Int, title: String?
+              ) {
+                  val g = geo(year, month)
+                  val top = gridTop(h, title != null)
+                  val cellW = w / 7f
+                  val cellH = (h - top) / g.rows
+                  val unit = minOf(cellW, cellH)
+
+                  val p = Paint(Paint.ANTI_ALIAS_FLAG)
+                  p.textAlign = Paint.Align.CENTER
+
+                  if (title != null) {
+                      p.color = TEXT
+                      p.typeface = Typeface.DEFAULT_BOLD
+                      p.textSize = h * 0.065f
+                      canvas.drawText(title, w / 2f, titleHeight(h, true) * 0.72f, p)
+                  }
+
+                  p.typeface = Typeface.DEFAULT_BOLD
+                  p.textSize = weekdayHeight(h) * 0.5f
+                  for (i in 0 until 7) {
+                      p.color = if (i == 6) RED else SUB
+                      val y = titleHeight(h, title != null) + weekdayHeight(h) * 0.68f
+                      canvas.drawText(WEEKDAYS[i], i * cellW + cellW / 2f, y, p)
+                  }
+
+                  for (d in 1..g.days) {
+                      val idx = g.offset + d - 1
+                      val col = idx % 7
+                      val row = idx / 7
+                      val cx = col * cellW + cellW / 2f
+                      val cy = top + row * cellH + cellH / 2f
+                      val lunar = LunarCalendar.toLunar(d, month, year)
+                      val isToday = (d == todayD && month == todayM && year == todayY)
+                      val hasEvent = LunarCalendar.eventOf(d, month, lunar).isNotEmpty()
+
+                      if (isToday) {
+                          p.style = Paint.Style.FILL
+                          p.color = RED
+                          canvas.drawCircle(cx, cy, unit * 0.46f, p)
+                      } else if (d == selected) {
+                          p.style = Paint.Style.STROKE
+                          p.strokeWidth = unit * 0.05f
+                          p.color = RED
+                          canvas.drawCircle(cx, cy, unit * 0.46f, p)
+                          p.style = Paint.Style.FILL
+                      }
+                      p.style = Paint.Style.FILL
+
+                      p.typeface = Typeface.DEFAULT_BOLD
+                      p.textSize = unit * 0.34f
+                      p.color = when {
+                          isToday -> Color.WHITE
+                          col == 6 -> RED
+                          else -> TEXT
+                      }
+                      canvas.drawText(d.toString(), cx, cy - cellH * 0.01f, p)
+
+                      p.typeface = if (lunar.day == 1) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                      p.textSize = unit * 0.2f
+                      p.color = when {
+                          isToday -> Color.WHITE
+                          lunar.day == 1 -> RED
+                          hasEvent -> ORANGE
+                          else -> SUB
+                      }
+                      val lt = if (lunar.day == 1) {
+                          "1/${lunar.month}" + (if (lunar.leap) "n" else "")
+                      } else {
+                          lunar.day.toString()
+                      }
+                      canvas.drawText(lt, cx, cy + unit * 0.3f, p)
+                  }
+              }
+          }
+          AMLICH_EOF
+          mkdir -p "app/src/main/java/vn/amlich/app"
+          cat > "app/src/main/java/vn/amlich/app/MonthView.kt" <<'AMLICH_EOF'
+          package vn.amlich.app
+
+          import android.content.Context
+          import android.graphics.Canvas
+          import android.view.MotionEvent
+          import android.view.View
+          import java.util.Calendar
+
+          class MonthView(context: Context) : View(context) {
+              var year: Int = 2026
+              var month: Int = 1
+              var selected: Int = 1
+              var onSelect: ((Int) -> Unit)? = null
+
+              override fun onDraw(canvas: Canvas) {
+                  super.onDraw(canvas)
+                  val now = Calendar.getInstance()
+                  MonthRenderer.draw(
+                      canvas, width.toFloat(), height.toFloat(), year, month,
+                      now.get(Calendar.YEAR), now.get(Calendar.MONTH) + 1, now.get(Calendar.DAY_OF_MONTH),
+                      selected, null
+                  )
+              }
+
+              override fun onTouchEvent(event: MotionEvent): Boolean {
+                  if (event.action == MotionEvent.ACTION_UP) {
+                      val g = MonthRenderer.geo(year, month)
+                      val top = MonthRenderer.gridTop(height.toFloat(), false)
+                      if (event.y >= top) {
+                          val col = (event.x / (width / 7f)).toInt().coerceIn(0, 6)
+                          val row = ((event.y - top) / ((height - top) / g.rows)).toInt().coerceIn(0, g.rows - 1)
+                          val day = row * 7 + col - g.offset + 1
+                          if (day in 1..g.days) {
+                              selected = day
+                              invalidate()
+                              onSelect?.invoke(day)
+                          }
+                      }
+                      performClick()
+                  }
+                  return true
+              }
+
+              override fun performClick(): Boolean {
+                  return super.performClick()
+              }
+          }
+          AMLICH_EOF
+          mkdir -p "app/src/main/java/vn/amlich/app"
+          cat > "app/src/main/java/vn/amlich/app/WidgetUpdater.kt" <<'AMLICH_EOF'
+          package vn.amlich.app
+
+          import android.app.AlarmManager
+          import android.app.PendingIntent
+          import android.appwidget.AppWidgetManager
+          import android.content.ComponentName
+          import android.content.Context
+          import android.content.Intent
+          import android.graphics.Bitmap
+          import android.graphics.Canvas
+          import android.widget.RemoteViews
+          import java.util.Calendar
+
+          object WidgetUpdater {
+              const val ACTION_REFRESH = "vn.amlich.app.REFRESH"
+
+              fun updateAll(ctx: Context) {
+                  val mgr = AppWidgetManager.getInstance(ctx)
+                  for (id in mgr.getAppWidgetIds(ComponentName(ctx, DayWidgetProvider::class.java))) {
+                      updateDay(ctx, mgr, id)
+                  }
+                  for (id in mgr.getAppWidgetIds(ComponentName(ctx, MonthWidgetProvider::class.java))) {
+                      updateMonth(ctx, mgr, id)
+                  }
+                  scheduleMidnight(ctx)
+              }
+
+              private fun openAppIntent(ctx: Context): PendingIntent {
+                  val i = Intent(ctx, MainActivity::class.java)
+                  return PendingIntent.getActivity(ctx, 0, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+              }
+
+              fun updateDay(ctx: Context, mgr: AppWidgetManager, id: Int) {
+                  val c = Calendar.getInstance()
+                  val d = c.get(Calendar.DAY_OF_MONTH)
+                  val m = c.get(Calendar.MONTH) + 1
+                  val y = c.get(Calendar.YEAR)
+                  val l = LunarCalendar.toLunar(d, m, y)
+
+                  val rv = RemoteViews(ctx.packageName, R.layout.widget_day)
+                  rv.setTextViewText(R.id.tv_dow, LunarCalendar.dowName(d, m, y) + ", " + d + "/" + m)
+                  rv.setTextViewText(R.id.tv_lunar_day, l.day.toString())
+                  rv.setTextViewText(R.id.tv_lunar_month, LunarCalendar.lunarMonthLabel(l) + " âm lịch")
+                  rv.setTextViewText(R.id.tv_year, "Năm " + LunarCalendar.yearName(l.year))
+                  rv.setTextViewText(
+                      R.id.tv_event,
+                      LunarCalendar.eventOf(d, m, l).ifEmpty { "Ngày " + LunarCalendar.dayName(d, m, y) }
+                  )
+                  rv.setOnClickPendingIntent(R.id.widget_root, openAppIntent(ctx))
+                  mgr.updateAppWidget(id, rv)
+              }
+
+              fun updateMonth(ctx: Context, mgr: AppWidgetManager, id: Int) {
+                  val c = Calendar.getInstance()
+                  val d = c.get(Calendar.DAY_OF_MONTH)
+                  val m = c.get(Calendar.MONTH) + 1
+                  val y = c.get(Calendar.YEAR)
+                  val l = LunarCalendar.toLunar(d, m, y)
+
+                  val size = 840
+                  val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                  val canvas = Canvas(bmp)
+                  val title = "Tháng $m/$y  ·  ${l.day}/${l.month}" + (if (l.leap) " nhuận" else "") + " ÂL"
+                  MonthRenderer.draw(canvas, size.toFloat(), size.toFloat(), y, m, y, m, d, 0, title)
+
+                  val rv = RemoteViews(ctx.packageName, R.layout.widget_month)
+                  rv.setImageViewBitmap(R.id.img_month, bmp)
+                  rv.setOnClickPendingIntent(R.id.widget_root, openAppIntent(ctx))
+                  mgr.updateAppWidget(id, rv)
+              }
+
+              fun scheduleMidnight(ctx: Context) {
+                  val am = ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+                  val i = Intent(ctx, RefreshReceiver::class.java)
+                  i.action = ACTION_REFRESH
+                  val pi = PendingIntent.getBroadcast(
+                      ctx, 1, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                  )
+                  val next = Calendar.getInstance()
+                  next.add(Calendar.DAY_OF_MONTH, 1)
+                  next.set(Calendar.HOUR_OF_DAY, 0)
+                  next.set(Calendar.MINUTE, 0)
+                  next.set(Calendar.SECOND, 30)
+                  next.set(Calendar.MILLISECOND, 0)
+                  am.setAndAllowWhileIdle(AlarmManager.RTC, next.timeInMillis, pi)
+              }
+          }
+          AMLICH_EOF
+          mkdir -p "app/src/main/java/vn/amlich/app"
+          cat > "app/src/main/java/vn/amlich/app/Widgets.kt" <<'AMLICH_EOF'
+          package vn.amlich.app
+
+          import android.appwidget.AppWidgetManager
+          import android.appwidget.AppWidgetProvider
+          import android.content.BroadcastReceiver
+          import android.content.Context
+          import android.content.Intent
+
+          class DayWidgetProvider : AppWidgetProvider() {
+              override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
+                  for (id in appWidgetIds) WidgetUpdater.updateDay(context, appWidgetManager, id)
+                  WidgetUpdater.scheduleMidnight(context)
+              }
+          }
+
+          class MonthWidgetProvider : AppWidgetProvider() {
+              override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
+                  for (id in appWidgetIds) WidgetUpdater.updateMonth(context, appWidgetManager, id)
+                  WidgetUpdater.scheduleMidnight(context)
+              }
+          }
+
+          class RefreshReceiver : BroadcastReceiver() {
+              override fun onReceive(context: Context, intent: Intent) {
+                  WidgetUpdater.updateAll(context)
+              }
+          }
+          AMLICH_EOF
+          mkdir -p "app/src/main/res/drawable"
+          cat > "app/src/main/res/drawable/ic_launcher.xml" <<'AMLICH_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path
+                  android:fillColor="#E53935"
+                  android:pathData="M18,0 L90,0 A18,18 0 0 1 108,18 L108,90 A18,18 0 0 1 90,108 L18,108 A18,18 0 0 1 0,90 L0,18 A18,18 0 0 1 18,0 Z" />
+              <path
+                  android:fillColor="#FFF8E1"
+                  android:pathData="M60,22 A32,32 0 1 0 60,86 A25,25 0 1 1 60,22 Z" />
+          </vector>
+          AMLICH_EOF
+          mkdir -p "app/src/main/res/drawable"
+          cat > "app/src/main/res/drawable/widget_bg.xml" <<'AMLICH_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <shape xmlns:android="http://schemas.android.com/apk/res/android"
+              android:shape="rectangle">
+              <solid android:color="#F5FFFFFF" />
+              <corners android:radius="22dp" />
+          </shape>
+          AMLICH_EOF
+          mkdir -p "app/src/main/res/layout"
+          cat > "app/src/main/res/layout/widget_day.xml" <<'AMLICH_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:id="@+id/widget_root"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:background="@drawable/widget_bg"
+              android:gravity="center"
+              android:orientation="vertical"
+              android:padding="10dp">
+
+              <TextView
+                  android:id="@+id/tv_dow"
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:text="Thứ Sáu, 23/10"
+                  android:textColor="#757575"
+                  android:textSize="13sp" />
+
+              <TextView
+                  android:id="@+id/tv_lunar_day"
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:text="14"
+                  android:textColor="#E53935"
+                  android:textSize="56sp"
+                  android:textStyle="bold" />
+
+              <TextView
+                  android:id="@+id/tv_lunar_month"
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:text="Tháng 9 âm lịch"
+                  android:textColor="#212121"
+                  android:textSize="14sp"
+                  android:textStyle="bold" />
+
+              <TextView
+                  android:id="@+id/tv_year"
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:text="Năm Bính Ngọ"
+                  android:textColor="#424242"
+                  android:textSize="12sp" />
+
+              <TextView
+                  android:id="@+id/tv_event"
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:layout_marginTop="2dp"
+                  android:ellipsize="end"
+                  android:maxLines="1"
+                  android:text="Ngày Canh Dần"
+                  android:textColor="#EF6C00"
+                  android:textSize="11sp" />
+          </LinearLayout>
+          AMLICH_EOF
+          mkdir -p "app/src/main/res/layout"
+          cat > "app/src/main/res/layout/widget_month.xml" <<'AMLICH_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:id="@+id/widget_root"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:background="@drawable/widget_bg"
+              android:padding="8dp">
+
+              <ImageView
+                  android:id="@+id/img_month"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent"
+                  android:contentDescription="Lịch tháng"
+                  android:scaleType="fitCenter" />
+          </FrameLayout>
+          AMLICH_EOF
+          mkdir -p "app/src/main/res/values"
+          cat > "app/src/main/res/values/strings.xml" <<'AMLICH_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Lịch Âm</string>
+              <string name="widget_day_label">Lịch Âm - Ngày</string>
+              <string name="widget_month_label">Lịch Âm - Tháng</string>
+          </resources>
+          AMLICH_EOF
+          mkdir -p "app/src/main/res/xml"
+          cat > "app/src/main/res/xml/widget_day_info.xml" <<'AMLICH_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+              android:initialLayout="@layout/widget_day"
+              android:minWidth="110dp"
+              android:minHeight="110dp"
+              android:resizeMode="horizontal|vertical"
+              android:updatePeriodMillis="1800000"
+              android:widgetCategory="home_screen" />
+          AMLICH_EOF
+          mkdir -p "app/src/main/res/xml"
+          cat > "app/src/main/res/xml/widget_month_info.xml" <<'AMLICH_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+              android:initialLayout="@layout/widget_month"
+              android:minWidth="250dp"
+              android:minHeight="250dp"
+              android:resizeMode="horizontal|vertical"
+              android:updatePeriodMillis="1800000"
+              android:widgetCategory="home_screen" />
+          AMLICH_EOF
+          cat > "build.gradle" <<'AMLICH_EOF'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.24' apply false
+          }
+          AMLICH_EOF
+          cat > "gradle.properties" <<'AMLICH_EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.nonTransitiveRClass=true
+          AMLICH_EOF
+          cat > "settings.gradle" <<'AMLICH_EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "AmLich"
+          include ':app'
+          AMLICH_EOF
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Build APK
+        working-directory: /home/runner/amlich
+        run: gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LichAm-APK
+          path: /home/runner/amlich/app/build/outputs/apk/debug/app-debug.apk
